@@ -203,13 +203,79 @@ curl -X POST http://localhost:8080/api/v1/sensors -H 'Content-Type: application/
 curl http://localhost:8080/api/v1/sensors
 ```
 
-# **Задание 6. Разработка MVP**
+# Задание 6. Разработка MVP
 
-Необходимо создать новые микросервисы и обеспечить их интеграции с существующим монолитом для плавного перехода к микросервисной архитектуре. 
+Из монолита выделены два MVP-микросервиса, каждый на своём ООП-языке, и налажена их
+интеграция с монолитом для плавного (постепенного) перехода к микросервисной архитектуре.
 
-### **Что нужно сделать**
+## Микросервисы
 
-1. Создайте новые микросервисы для управления телеметрией и устройствами (с простейшей логикой), которые будут интегрированы с существующим монолитным приложением. Каждый микросервис на своем ООП языке.
-2. Обеспечьте взаимодействие между микросервисами и монолитом (при желании с помощью брокера сообщений), чтобы постепенно перенести функциональность из монолита в микросервисы. 
+- **device-service** — **TypeScript** (NestJS + Fastify-адаптер), порт **8082**, БД `device_service`.
+  Реализует подмножество OpenAPI-контракта из задания 4 (`api/device-service.openapi.yaml`):
+  - `POST /api/v1/devices` — регистрация устройства (201; дубль `serial_number` → 409);
+  - `GET /api/v1/devices/{id}` — карточка устройства (200/404);
+  - `PATCH /api/v1/devices/{id}/state` — смена состояния `on`/`off` (200/400/404);
+  - `POST /api/v1/devices/{id}/commands` — постановка команды в очередь (202).
 
-В результате у вас должны быть созданы Dockerfiles и docker-compose для запуска микросервисов. 
+  Слоистая структура: контроллер → сервис → репозиторий, DI через конструкторы.
+  Тело ошибок приведено к контракту `{ "error": "<сообщение>" }`.
+- **telemetry-service** — **Rust** (axum + sqlx + rdkafka), порт **8083**, БД `telemetry_service`.
+  Консюмит поток телеметрии из Kafka и отдаёт историю измерений по тому же контракту задания 4:
+  - `GET /api/v1/devices/{id}/telemetry?from&to&page&page_size` — страница измерений
+    (`TelemetryPage`; для неизвестного устройства — пустая страница `200`, а не `404`,
+    так как сервис намеренно не ведёт реестр устройств — граница контекста).
+
+«Каждый микросервис на своём ООП-языке» — TypeScript и Rust (плюс Go в монолите).
+Каждый сервис при старте сам создаёт свои таблицы (`CREATE TABLE IF NOT EXISTS`).
+
+## Интеграция с монолитом (постепенная миграция)
+
+- **Телеметрия — через Kafka.** Монолит при чтении температуры сенсора публикует измерение в
+  топик `telemetry.raw` (контракт из `api/telemetry-events.asyncapi.yaml`; в целевой схеме этим
+  будет заниматься device-gateway). telemetry-service консюмит топик и сохраняет измерения.
+- **Устройства — через REST.** При создании сенсора монолит best-effort регистрирует устройство
+  в device-service (`POST /api/v1/devices`, `serial_number` вида `SENSOR-000001`).
+
+Интеграция не критична для основного потока: ошибки Kafka/REST логируются и не ломают работу
+монолита. Если Kafka или device-service недоступны, монолит продолжает работать (nil-guard'ы).
+
+## Инфраструктура
+
+- **kafka** (`apache/kafka:3.8.1`) — одноузловой брокер в режиме KRaft, healthcheck, автосоздание
+  топиков.
+- Отдельные БД на сервис (`device_service`, `telemetry_service`) в общем контейнере `postgres`
+  (подход database-per-service; общий контейнер — компромисс MVP). Создаются скриптом
+  `./init_services.sql`, смонтированным в `/docker-entrypoint-initdb.d/`.
+- Для каждого сервиса подготовлены двухстадийные `Dockerfile` и сервисы в `apps/docker-compose.yml`.
+
+## Запуск и проверка
+
+```bash
+cd apps
+docker compose down -v            # init-скрипты выполняются только на пустом томе
+docker compose up -d --build      # первая сборка Rust-сервиса занимает несколько минут
+docker compose ps                 # 6 контейнеров Up; postgres и kafka — healthy
+
+# 1. device-service напрямую (контракт задания 4)
+curl -X POST localhost:8082/api/v1/devices -H 'Content-Type: application/json' \
+  -d '{"serial_number":"TH-000123456","type_id":1,"house_id":42,"name":"Датчик температуры (гостиная)"}'   # 201
+curl -X POST localhost:8082/api/v1/devices -H 'Content-Type: application/json' \
+  -d '{"serial_number":"TH-000123456","type_id":1,"house_id":42,"name":"dup"}'                             # 409
+curl localhost:8082/api/v1/devices/1                                                                       # 200
+curl localhost:8082/api/v1/devices/999                                                                     # 404
+curl -X PATCH localhost:8082/api/v1/devices/1/state -H 'Content-Type: application/json' -d '{"status":"on"}'          # 200
+curl -X POST localhost:8082/api/v1/devices/1/commands -H 'Content-Type: application/json' \
+  -d '{"command":"turn_on","params":{"target_temperature":22}}'                                           # 202
+
+# 2. монолит → device-service: регистрация устройства при создании сенсора
+curl -X POST localhost:8080/api/v1/sensors -H 'Content-Type: application/json' \
+  -d '{"name":"Kitchen Temp","type":"temperature","location":"Kitchen","unit":"°C"}'                      # 201
+
+# 3. монолит → Kafka → telemetry-service
+curl localhost:8080/api/v1/sensors    # чтение температуры публикует измерение в telemetry.raw
+sleep 5
+curl "localhost:8083/api/v1/devices/1/telemetry"   # 200, items с metric "temperature"
+curl localhost:8083/health                         # {"status":"ok"}
+
+docker compose down -v
+```
