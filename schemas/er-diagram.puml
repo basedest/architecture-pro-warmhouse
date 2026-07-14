@@ -1,0 +1,86 @@
+@startuml er-diagram
+title ER-диаграмма — целевая модель данных экосистемы «Тёплый дом»
+
+hide circle
+skinparam linetype ortho
+
+entity "users" as users {
+  * id : BIGSERIAL <<PK>>
+  --
+  * email : VARCHAR <<UNIQUE>>
+  * password_hash : VARCHAR
+  * name : VARCHAR
+  * created_at : TIMESTAMPTZ
+}
+
+entity "houses" as houses {
+  * id : BIGSERIAL <<PK>>
+  --
+  * user_id : BIGINT <<FK users>>
+  * name : VARCHAR
+  address : VARCHAR
+  * created_at : TIMESTAMPTZ
+}
+
+entity "device_types" as device_types {
+  * id : BIGSERIAL <<PK>>
+  --
+  * name : VARCHAR
+  * protocol : VARCHAR
+  description : TEXT
+}
+
+entity "modules" as modules {
+  * id : BIGSERIAL <<PK>>
+  --
+  * name : VARCHAR
+  description : TEXT
+}
+
+entity "module_device_types" as module_device_types {
+  * module_id : BIGINT <<PK,FK modules>>
+  * device_type_id : BIGINT <<PK,FK device_types>>
+}
+
+entity "devices" as devices {
+  * id : BIGSERIAL <<PK>>
+  --
+  * house_id : BIGINT <<FK houses>>
+  * type_id : BIGINT <<FK device_types>>
+  * serial_number : VARCHAR <<UNIQUE>>
+  * name : VARCHAR
+  * status : VARCHAR
+  firmware_version : VARCHAR
+  last_seen_at : TIMESTAMPTZ
+  * created_at : TIMESTAMPTZ
+}
+
+entity "telemetry_data" as telemetry_data {
+  * id : BIGSERIAL <<PK>>
+  --
+  * device_id : BIGINT <<FK devices>>
+  * metric : VARCHAR
+  * value : DOUBLE
+  unit : VARCHAR
+  * recorded_at : TIMESTAMPTZ
+}
+
+entity "scenarios" as scenarios {
+  * id : BIGSERIAL <<PK>>
+  --
+  * house_id : BIGINT <<FK houses>>
+  * name : VARCHAR
+  * condition : JSONB
+  * action : JSONB
+  * enabled : BOOLEAN
+}
+
+users ||--o{ houses : "владеет"
+houses ||--o{ devices : "содержит"
+device_types ||--o{ devices : "классифицирует"
+houses ||--o{ scenarios : "имеет"
+devices ||--o{ telemetry_data : "генерирует"
+modules ||--o{ module_device_types : ""
+device_types ||--o{ module_device_types : ""
+
+@enduml
