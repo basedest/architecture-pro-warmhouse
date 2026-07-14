@@ -1,0 +1,30 @@
+@startuml c4-component-device-service
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title Диаграмма компонентов C4 — device-service (Управление устройствами)
+
+Container(gateway, "API Gateway", "Kong / nginx", "Маршрутизация внешних запросов")
+ContainerQueue(kafka, "Kafka", "брокер сообщений", "device.commands, device.events")
+ContainerDb(devicesDb, "devices-db", "PostgreSQL", "Устройства, типы, модули")
+
+Container_Boundary(deviceSvc, "device-service") {
+    Component(restApi, "REST API Controller", "gin handler", "Обрабатывает REST-запросы: регистрация, получение, смена состояния устройства")
+    Component(cmdHandler, "Command Handler", "сервис", "Валидирует команды и публикует их в брокер")
+    Component(stateMgr, "Device State Manager", "сервис", "Поддерживает актуальное состояние устройства по событиям")
+    Component(registry, "Device Registry", "репозиторий", "CRUD над устройствами/типами/модулями")
+    Component(producer, "Kafka Producer", "адаптер", "Публикует сообщения в device.commands")
+    Component(consumer, "Kafka Consumer", "адаптер", "Читает device.events (подтверждения от устройств)")
+}
+
+Rel(gateway, restApi, "REST", "HTTP")
+Rel(restApi, cmdHandler, "Передаёт команду")
+Rel(restApi, registry, "CRUD устройств")
+Rel(cmdHandler, producer, "Публикует команду")
+Rel(producer, kafka, "Пишет в device.commands")
+Rel(consumer, kafka, "Читает из device.events")
+Rel(consumer, stateMgr, "Событие устройства")
+Rel(stateMgr, registry, "Обновляет состояние")
+Rel(registry, devicesDb, "Читает/пишет", "SQL")
+
+SHOW_LEGEND()
+@enduml

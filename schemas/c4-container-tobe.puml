@@ -1,0 +1,57 @@
+@startuml c4-container-tobe
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+title Диаграмма контейнеров C4 — целевая микросервисная экосистема «Тёплый дом» (To-Be)
+
+Person(user, "Пользователь", "Управляет умным домом в режиме самообслуживания (SaaS)")
+System_Ext(device, "Устройство партнёра", "Датчик/реле в доме, работает по стандартным протоколам (MQTT)")
+
+System_Boundary(ecosystem, "Экосистема умного дома") {
+    Container(web, "Web/Mobile клиент", "SPA / мобильное приложение", "Самообслуживание: покупка модулей, подключение устройств, сценарии, телеметрия")
+    Container(gateway, "API Gateway", "Kong / nginx", "Единая точка входа, маршрутизация, аутентификация, rate limiting")
+
+    Container(userSvc, "user-service", "микросервис", "Учётные записи, дома, права доступа")
+    ContainerDb(usersDb, "users-db", "PostgreSQL", "Пользователи, дома")
+
+    Container(deviceSvc, "device-service", "микросервис", "Реестр устройств/типов/модулей, состояние, команды")
+    ContainerDb(devicesDb, "devices-db", "PostgreSQL", "Устройства, типы, модули")
+
+    Container(telemetrySvc, "telemetry-service", "микросервис", "Приём потока телеметрии, хранение, API истории")
+    ContainerDb(telemetryDb, "telemetry-db", "PostgreSQL", "Измерения телеметрии")
+
+    Container(scenarioSvc, "scenario-service", "микросервис", "Правила автоматизации: подписка на телеметрию, отправка команд")
+    ContainerDb(scenariosDb, "scenarios-db", "PostgreSQL", "Сценарии автоматизации")
+
+    Container(deviceGw, "device-gateway", "микросервис", "Мост MQTT <-> Kafka, подключение устройств по стандартным протоколам")
+
+    ContainerQueue(kafka, "Kafka", "брокер сообщений", "topics: telemetry.raw, device.commands, device.events")
+    Container(mqtt, "MQTT broker", "Mosquitto / EMQX", "Канал связи с устройствами партнёров")
+
+    Container(monolith, "SmartHome (монолит)", "Go + PostgreSQL", "Legacy: управление отоплением на переходный период (Strangler Fig)")
+}
+
+Rel(user, web, "Использует", "HTTPS")
+Rel(web, gateway, "Вызовы API", "HTTPS/REST")
+
+Rel(gateway, userSvc, "REST", "HTTP")
+Rel(gateway, deviceSvc, "REST", "HTTP")
+Rel(gateway, telemetrySvc, "REST", "HTTP")
+Rel(gateway, scenarioSvc, "REST", "HTTP")
+Rel(gateway, monolith, "REST (маршрутизация legacy-функций)", "HTTP")
+
+Rel(userSvc, usersDb, "Читает/пишет", "SQL")
+Rel(deviceSvc, devicesDb, "Читает/пишет", "SQL")
+Rel(telemetrySvc, telemetryDb, "Читает/пишет", "SQL")
+Rel(scenarioSvc, scenariosDb, "Читает/пишет", "SQL")
+
+Rel(deviceSvc, kafka, "Публикует команды", "device.commands")
+Rel(deviceGw, kafka, "Читает команды / публикует телеметрию и события", "device.commands, telemetry.raw, device.events")
+Rel(telemetrySvc, kafka, "Подписан на телеметрию", "telemetry.raw")
+Rel(scenarioSvc, kafka, "Подписан на телеметрию, публикует команды", "telemetry.raw, device.commands")
+Rel(deviceSvc, kafka, "Подписан на события устройств", "device.events")
+
+Rel(deviceGw, mqtt, "Обмен с устройствами", "MQTT")
+Rel(device, mqtt, "Публикует телеметрию, принимает команды", "MQTT")
+
+SHOW_LEGEND()
+@enduml
