@@ -1,0 +1,121 @@
+asyncapi: '2.6.0'
+info:
+  title: Warmhouse Telemetry & Commands Events API
+  version: 1.0.0
+  description: |
+    Асинхронный контракт обмена сообщениями через Kafka в экосистеме «Тёплый дом».
+    Канал `telemetry.raw` — поток измерений от устройств (публикует device-gateway,
+    читают telemetry-service и scenario-service). Канал `device.commands` — команды
+    устройствам (публикует device-service, читает device-gateway).
+servers:
+  kafka:
+    url: kafka:9092
+    protocol: kafka
+    description: Kafka-брокер экосистемы
+defaultContentType: application/json
+channels:
+  telemetry.raw:
+    description: Сырой поток телеметрии от устройств.
+    publish:
+      operationId: publishTelemetry
+      summary: Публикация измерения телеметрии (device-gateway)
+      message:
+        $ref: '#/components/messages/TelemetryEvent'
+    subscribe:
+      operationId: consumeTelemetry
+      summary: Потребление телеметрии (telemetry-service, scenario-service)
+      message:
+        $ref: '#/components/messages/TelemetryEvent'
+  device.commands:
+    description: Команды устройствам для асинхронного исполнения.
+    publish:
+      operationId: publishDeviceCommand
+      summary: Публикация команды устройству (device-service)
+      message:
+        $ref: '#/components/messages/DeviceCommand'
+    subscribe:
+      operationId: consumeDeviceCommand
+      summary: Потребление команды (device-gateway)
+      message:
+        $ref: '#/components/messages/DeviceCommand'
+components:
+  messages:
+    TelemetryEvent:
+      name: TelemetryEvent
+      title: Измерение телеметрии
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/TelemetryEventPayload'
+      examples:
+        - name: temperature
+          summary: Измерение температуры
+          payload:
+            device_id: 1001
+            metric: "temperature"
+            value: 22.4
+            unit: "°C"
+            recorded_at: "2025-07-14T10:20:00Z"
+    DeviceCommand:
+      name: DeviceCommand
+      title: Команда устройству
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/DeviceCommandPayload'
+      examples:
+        - name: turnOn
+          summary: Включить отопление
+          payload:
+            command_id: "b2b9d0f2-1f3e-4f2a-9a1e-4b1c9c0f1234"
+            device_id: 1001
+            command: "turn_on"
+            params:
+              target_temperature: 22
+            issued_at: "2025-07-14T10:19:59Z"
+  schemas:
+    TelemetryEventPayload:
+      type: object
+      required: [device_id, metric, value, recorded_at]
+      properties:
+        device_id:
+          type: integer
+          format: int64
+          description: Идентификатор устройства-источника
+        metric:
+          type: string
+          description: Тип измеряемой метрики
+          example: "temperature"
+        value:
+          type: number
+          format: double
+          example: 22.4
+        unit:
+          type: string
+          example: "°C"
+        recorded_at:
+          type: string
+          format: date-time
+          example: "2025-07-14T10:20:00Z"
+    DeviceCommandPayload:
+      type: object
+      required: [command_id, device_id, command, issued_at]
+      properties:
+        command_id:
+          type: string
+          format: uuid
+          example: "b2b9d0f2-1f3e-4f2a-9a1e-4b1c9c0f1234"
+        device_id:
+          type: integer
+          format: int64
+          example: 1001
+        command:
+          type: string
+          example: "turn_on"
+        params:
+          type: object
+          additionalProperties: true
+          example:
+            target_temperature: 22
+        issued_at:
+          type: string
+          format: date-time
+          example: "2025-07-14T10:19:59Z"

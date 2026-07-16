@@ -32,6 +32,23 @@ func main() {
 	temperatureService := services.NewTemperatureService(temperatureAPIURL)
 	log.Printf("Temperature service initialized with API URL: %s\n", temperatureAPIURL)
 
+	// Initialize integration with microservices (best-effort, постепенная миграция)
+	kafkaBrokers := getEnv("KAFKA_BROKERS", "kafka:9092")
+	telemetryTopic := getEnv("TELEMETRY_TOPIC", "telemetry.raw")
+	deviceServiceURL := getEnv("DEVICE_SERVICE_URL", "http://device-service:8082")
+
+	var telemetryPublisher *services.TelemetryPublisher
+	if kafkaBrokers != "" {
+		telemetryPublisher = services.NewTelemetryPublisher(kafkaBrokers, telemetryTopic)
+		log.Printf("Telemetry publisher initialized (brokers=%s, topic=%s)\n", kafkaBrokers, telemetryTopic)
+	}
+
+	var deviceClient *services.DeviceServiceClient
+	if deviceServiceURL != "" {
+		deviceClient = services.NewDeviceServiceClient(deviceServiceURL)
+		log.Printf("Device-service client initialized (url=%s)\n", deviceServiceURL)
+	}
+
 	// Initialize router
 	router := gin.Default()
 
@@ -46,7 +63,7 @@ func main() {
 	apiRoutes := router.Group("/api/v1")
 
 	// Register sensor routes
-	sensorHandler := handlers.NewSensorHandler(database, temperatureService)
+	sensorHandler := handlers.NewSensorHandler(database, temperatureService, telemetryPublisher, deviceClient)
 	sensorHandler.RegisterRoutes(apiRoutes)
 
 	// Start server
@@ -74,6 +91,12 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatalf("Server forced to shutdown: %v\n", err)
+	}
+
+	if telemetryPublisher != nil {
+		if err := telemetryPublisher.Close(); err != nil {
+			log.Printf("Failed to close telemetry publisher: %v\n", err)
+		}
 	}
 
 	log.Println("Server exited properly")

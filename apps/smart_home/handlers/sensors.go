@@ -18,13 +18,17 @@ import (
 type SensorHandler struct {
 	DB                 *db.DB
 	TemperatureService *services.TemperatureService
+	TelemetryPublisher *services.TelemetryPublisher
+	DeviceClient       *services.DeviceServiceClient
 }
 
 // NewSensorHandler creates a new SensorHandler
-func NewSensorHandler(db *db.DB, temperatureService *services.TemperatureService) *SensorHandler {
+func NewSensorHandler(db *db.DB, temperatureService *services.TemperatureService, telemetryPublisher *services.TelemetryPublisher, deviceClient *services.DeviceServiceClient) *SensorHandler {
 	return &SensorHandler{
 		DB:                 db,
 		TemperatureService: temperatureService,
+		TelemetryPublisher: telemetryPublisher,
+		DeviceClient:       deviceClient,
 	}
 }
 
@@ -60,6 +64,9 @@ func (h *SensorHandler) GetSensors(c *gin.Context) {
 				sensors[i].Status = tempData.Status
 				sensors[i].LastUpdated = tempData.Timestamp
 				log.Printf("Updated temperature data for sensor %d from external API", sensor.ID)
+				if h.TelemetryPublisher != nil {
+					h.TelemetryPublisher.Publish(sensor.ID, tempData.Value, tempData.Unit, tempData.Timestamp)
+				}
 			} else {
 				log.Printf("Failed to fetch temperature data for sensor %d: %v", sensor.ID, err)
 			}
@@ -92,6 +99,9 @@ func (h *SensorHandler) GetSensorByID(c *gin.Context) {
 			sensor.Status = tempData.Status
 			sensor.LastUpdated = tempData.Timestamp
 			log.Printf("Updated temperature data for sensor %d from external API", sensor.ID)
+			if h.TelemetryPublisher != nil {
+				h.TelemetryPublisher.Publish(sensor.ID, tempData.Value, tempData.Unit, tempData.Timestamp)
+			}
 		} else {
 			log.Printf("Failed to fetch temperature data for sensor %d: %v", sensor.ID, err)
 		}
@@ -140,6 +150,10 @@ func (h *SensorHandler) CreateSensor(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	if h.DeviceClient != nil {
+		go h.DeviceClient.RegisterDevice(sensor)
 	}
 
 	c.JSON(http.StatusCreated, sensor)

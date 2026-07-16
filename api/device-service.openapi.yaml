@@ -1,0 +1,494 @@
+openapi: 3.0.3
+info:
+  title: Device Service API
+  description: |
+    REST API микросервиса device-service (домен «Управление устройствами»)
+    экосистемы «Тёплый дом». Синхронные операции: регистрация устройства
+    в режиме самообслуживания, получение информации, смена состояния,
+    отправка команд (асинхронное исполнение через брокер) и чтение истории телеметрии.
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Локальный запуск через API Gateway
+security:
+  - bearerAuth: []
+paths:
+  /devices:
+    post:
+      operationId: registerDevice
+      summary: Регистрация устройства (self-service)
+      description: Пользователь самостоятельно регистрирует купленное устройство в своём доме.
+      tags: [devices]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceCreate'
+            examples:
+              default:
+                summary: Регистрация датчика температуры
+                value:
+                  serial_number: "TH-000123456"
+                  type_id: 1
+                  house_id: 42
+                  name: "Датчик температуры (гостиная)"
+      responses:
+        '201':
+          description: Устройство зарегистрировано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+              examples:
+                default:
+                  value:
+                    id: 1001
+                    serial_number: "TH-000123456"
+                    type_id: 1
+                    house_id: 42
+                    name: "Датчик температуры (гостиная)"
+                    status: "off"
+                    firmware_version: "1.0.0"
+                    last_seen_at: null
+                    created_at: "2025-07-14T10:15:00Z"
+        '400':
+          description: Некорректное тело запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                default:
+                  value:
+                    error: "field 'serial_number' is required"
+        '409':
+          description: Устройство с таким serial_number уже зарегистрировано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                default:
+                  value:
+                    error: "device with serial_number 'TH-000123456' already exists"
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                default:
+                  value:
+                    error: "internal server error"
+  /devices/{deviceId}:
+    get:
+      operationId: getDevice
+      summary: Получить информацию об устройстве
+      tags: [devices]
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '200':
+          description: Устройство найдено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+              examples:
+                default:
+                  value:
+                    id: 1001
+                    serial_number: "TH-000123456"
+                    type_id: 1
+                    house_id: 42
+                    name: "Датчик температуры (гостиная)"
+                    status: "on"
+                    firmware_version: "1.0.0"
+                    last_seen_at: "2025-07-14T10:20:00Z"
+                    created_at: "2025-07-14T10:15:00Z"
+        '404':
+          description: Устройство не найдено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                default:
+                  value:
+                    error: "device 1001 not found"
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                default:
+                  value:
+                    error: "internal server error"
+  /devices/{deviceId}/state:
+    patch:
+      operationId: updateDeviceState
+      summary: Изменить состояние устройства
+      description: Синхронно меняет желаемое состояние устройства (включено/выключено).
+      tags: [devices]
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceStateUpdate'
+            examples:
+              default:
+                value:
+                  status: "on"
+      responses:
+        '200':
+          description: Состояние обновлено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+              examples:
+                default:
+                  value:
+                    id: 1001
+                    serial_number: "TH-000123456"
+                    type_id: 1
+                    house_id: 42
+                    name: "Датчик температуры (гостиная)"
+                    status: "on"
+                    firmware_version: "1.0.0"
+                    last_seen_at: "2025-07-14T10:20:00Z"
+                    created_at: "2025-07-14T10:15:00Z"
+        '400':
+          description: Некорректное значение состояния
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                default:
+                  value:
+                    error: "status must be one of: on, off"
+        '404':
+          description: Устройство не найдено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                default:
+                  value:
+                    error: "device 1001 not found"
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                default:
+                  value:
+                    error: "internal server error"
+  /devices/{deviceId}/commands:
+    post:
+      operationId: sendDeviceCommand
+      summary: Отправить команду устройству
+      description: |
+        Принимает команду и публикует её в брокер (Kafka topic `device.commands`)
+        для асинхронного исполнения. Возвращает идентификатор команды сразу,
+        не дожидаясь подтверждения от устройства.
+      tags: [commands]
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommandRequest'
+            examples:
+              default:
+                summary: Включить отопление
+                value:
+                  command: "turn_on"
+                  params:
+                    target_temperature: 22
+      responses:
+        '202':
+          description: Команда принята к исполнению
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandAccepted'
+              examples:
+                default:
+                  value:
+                    command_id: "b2b9d0f2-1f3e-4f2a-9a1e-4b1c9c0f1234"
+                    status: "pending"
+        '404':
+          description: Устройство не найдено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                default:
+                  value:
+                    error: "device 1001 not found"
+        '422':
+          description: Команда не поддерживается данным типом устройства
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                default:
+                  value:
+                    error: "command 'turn_on' is not supported by device type 1"
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                default:
+                  value:
+                    error: "internal server error"
+  /devices/{deviceId}/telemetry:
+    get:
+      operationId: getDeviceTelemetry
+      summary: История телеметрии устройства
+      tags: [telemetry]
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - name: from
+          in: query
+          description: Начало интервала (RFC3339)
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          description: Конец интервала (RFC3339)
+          schema:
+            type: string
+            format: date-time
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+      responses:
+        '200':
+          description: Страница измерений телеметрии
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TelemetryPage'
+              examples:
+                default:
+                  value:
+                    items:
+                      - id: 90001
+                        device_id: 1001
+                        metric: "temperature"
+                        value: 22.4
+                        unit: "°C"
+                        recorded_at: "2025-07-14T10:20:00Z"
+                      - id: 90002
+                        device_id: 1001
+                        metric: "temperature"
+                        value: 22.7
+                        unit: "°C"
+                        recorded_at: "2025-07-14T10:21:00Z"
+                    page: 1
+                    page_size: 50
+                    total: 2
+        '404':
+          description: Устройство не найдено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                default:
+                  value:
+                    error: "device 1001 not found"
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                default:
+                  value:
+                    error: "internal server error"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT-токен, выдаётся API Gateway после аутентификации пользователя.
+  parameters:
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      description: Идентификатор устройства
+      schema:
+        type: integer
+        format: int64
+        example: 1001
+  schemas:
+    DeviceCreate:
+      type: object
+      required: [serial_number, type_id, house_id, name]
+      properties:
+        serial_number:
+          type: string
+          example: "TH-000123456"
+        type_id:
+          type: integer
+          format: int64
+          example: 1
+        house_id:
+          type: integer
+          format: int64
+          example: 42
+        name:
+          type: string
+          example: "Датчик температуры (гостиная)"
+    DeviceStateUpdate:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [on, off]
+          example: "on"
+    CommandRequest:
+      type: object
+      required: [command]
+      properties:
+        command:
+          type: string
+          example: "turn_on"
+        params:
+          type: object
+          additionalProperties: true
+          example:
+            target_temperature: 22
+    CommandAccepted:
+      type: object
+      properties:
+        command_id:
+          type: string
+          format: uuid
+          example: "b2b9d0f2-1f3e-4f2a-9a1e-4b1c9c0f1234"
+        status:
+          type: string
+          enum: [pending]
+          example: "pending"
+    Device:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1001
+        serial_number:
+          type: string
+          example: "TH-000123456"
+        type_id:
+          type: integer
+          format: int64
+          example: 1
+        house_id:
+          type: integer
+          format: int64
+          example: 42
+        name:
+          type: string
+          example: "Датчик температуры (гостиная)"
+        status:
+          type: string
+          enum: [on, off]
+          example: "on"
+        firmware_version:
+          type: string
+          nullable: true
+          example: "1.0.0"
+        last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2025-07-14T10:20:00Z"
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-07-14T10:15:00Z"
+    TelemetryRecord:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 90001
+        device_id:
+          type: integer
+          format: int64
+          example: 1001
+        metric:
+          type: string
+          example: "temperature"
+        value:
+          type: number
+          format: double
+          example: 22.4
+        unit:
+          type: string
+          example: "°C"
+        recorded_at:
+          type: string
+          format: date-time
+          example: "2025-07-14T10:20:00Z"
+    TelemetryPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TelemetryRecord'
+        page:
+          type: integer
+          example: 1
+        page_size:
+          type: integer
+          example: 50
+        total:
+          type: integer
+          example: 2
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: "device 1001 not found"

@@ -1,0 +1,18 @@
+@startuml c4-context-asis
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+
+title Диаграмма контекста C4 — текущее монолитное решение «Тёплый дом» (As-Is)
+
+Person(user, "Пользователь", "Владелец дома: управляет отоплением и смотрит температуру через веб-интерфейс")
+Person(technician, "Специалист по подключению", "Выезжает на объект и физически подключает датчики к системе")
+
+System(smarthome, "SmartHome (монолит)", "Go + gin + PostgreSQL. Управление отоплением, CRUD датчиков, синхронный опрос температуры")
+
+System_Ext(sensor, "Датчик температуры", "Устройство в доме, отдаёт значение температуры по HTTP-запросу")
+
+Rel(user, smarthome, "Управляет отоплением, просматривает температуру", "HTTPS")
+Rel(smarthome, sensor, "Синхронно опрашивает температуру на каждый запрос", "HTTP")
+Rel(technician, sensor, "Устанавливает и подключает датчик к системе", "выезд на объект")
+
+SHOW_LEGEND()
+@enduml

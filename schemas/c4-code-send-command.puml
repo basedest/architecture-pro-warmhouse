@@ -1,0 +1,38 @@
+@startuml c4-code-send-command
+title Диаграмма кода (последовательность) — «Пользователь включает отопление»
+
+actor "Пользователь" as user
+participant "API Gateway" as gw
+participant "device-service" as dsvc
+queue "Kafka\n(device.commands)" as cmds
+participant "device-gateway" as dgw
+participant "MQTT broker" as mqtt
+participant "Устройство" as dev
+queue "Kafka\n(device.events)" as events
+
+user -> gw : POST /devices/{id}/commands\n{command: "turn_on"}
+gw -> dsvc : POST /devices/{id}/commands
+activate dsvc
+dsvc -> dsvc : Валидация команды\nи устройства
+dsvc -> dsvc : Сохранить команду\n(status = pending)
+dsvc -> cmds : publish DeviceCommand\n{command_id, device_id, command}
+dsvc --> gw : 202 Accepted\n{command_id, status: "pending"}
+deactivate dsvc
+gw --> user : 202 Accepted
+
+cmds -> dgw : consume DeviceCommand
+activate dgw
+dgw -> mqtt : publish команду в топик устройства
+mqtt -> dev : доставка команды
+dev -> dev : Включить отопление
+dev -> mqtt : подтверждение (ack)
+mqtt -> dgw : ack
+dgw -> events : publish DeviceEvent\n{command_id, status: "done"}
+deactivate dgw
+
+events -> dsvc : consume DeviceEvent
+activate dsvc
+dsvc -> dsvc : Обновить состояние\nустройства (status = on)
+deactivate dsvc
+
+@enduml

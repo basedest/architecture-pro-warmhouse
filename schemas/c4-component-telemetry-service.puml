@@ -1,0 +1,25 @@
+@startuml c4-component-telemetry-service
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title Диаграмма компонентов C4 — telemetry-service (Телеметрия)
+
+Container(gateway, "API Gateway", "Kong / nginx", "Маршрутизация внешних запросов")
+ContainerQueue(kafka, "Kafka", "брокер сообщений", "telemetry.raw")
+ContainerDb(telemetryDb, "telemetry-db", "PostgreSQL", "Измерения телеметрии")
+
+Container_Boundary(telemetrySvc, "telemetry-service") {
+    Component(ingest, "Telemetry Ingest Consumer", "адаптер", "Читает поток telemetry.raw из Kafka")
+    Component(aggregation, "Aggregation Service", "сервис", "Валидация, нормализация и агрегация измерений")
+    Component(repo, "Telemetry Repository", "репозиторий", "Запись и выборка измерений")
+    Component(queryApi, "Query API Controller", "gin handler", "REST API истории телеметрии для клиентов")
+}
+
+Rel(ingest, kafka, "Читает из telemetry.raw")
+Rel(ingest, aggregation, "Передаёт измерение")
+Rel(aggregation, repo, "Сохраняет измерение")
+Rel(repo, telemetryDb, "Читает/пишет", "SQL")
+Rel(gateway, queryApi, "REST", "HTTP")
+Rel(queryApi, repo, "Запрашивает историю")
+
+SHOW_LEGEND()
+@enduml
